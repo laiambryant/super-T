@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate manifest
+        run: |
+          jq -e '.schemaVersion == 1 and (.id | test("^[^/]+$")) and (.kinds | length > 0)' manifest.json
+          for entry in $(jq -r '.entryPoints[]' manifest.json); do
+            test -f "$entry" || { echo "missing entry point: $entry"; exit 1; }
+          done
+
+      - name: Shell lint
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          bash -n scan.sh test/scan.test.sh
+          shellcheck scan.sh test/scan.test.sh
+
+      - name: Test
+        run: make test

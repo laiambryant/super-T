@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "liambryant.todo",
+  "name": "Todo",
+  "version": "1.0.0",
+  "author": "liambryant",
+  "description": "Browse and edit markdown todo lists",
+  "kinds": [
+    "overlay",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Todo.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Todo",
+    "description": "Open task count; click to open the todo overlay",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
