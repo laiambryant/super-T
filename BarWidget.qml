@@ -1,98 +1,81 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import qs.Commons
-import qs.Ui
+import qs.Ui as Ui
+import "Config.js" as Config
 
-// Bar pill showing how many tasks are still open across every list. Left click
-// opens the todo overlay; the two share no state, so the pill re-scans on a
-// timer and immediately after a click closes the overlay.
-BarWidget {
+Ui.BarWidget {
   id: root
   moduleName: "liambryant.todo"
 
   property string home: Quickshell.env("HOME")
-
-  // The directory can be set either on this bar entry or on the plugin entry
-  // in shell.json; the bar entry wins so a second pill could watch a second
-  // directory if that is ever wanted.
-  property string pluginDir: ""
-  readonly property string configuredDir: String(setting("dir", "") || pluginDir)
-  readonly property string todoDir: expandPath(configuredDir || (home + "/Documents/todos"))
-
+  property var pluginDir: undefined
+  property string configError: ""
+  property bool configReady: false
+  readonly property var rawDir: settings && settings.dir !== undefined ? settings.dir : pluginDir
+  readonly property var resolved: Config.resolve(rawDir, home)
+  readonly property string todoDir: resolved.ok ? resolved.path : ""
+  readonly property string validationError: configError || (resolved.ok ? "" : resolved.error)
+  property string scanError: ""
+  readonly property string errorText: validationError || scanError
   property int openCount: 0
   property int doneCount: 0
-  property bool scanned: false
-
+  property int scanRequest: -1
+  property string scanDirectory: ""
+  property bool refreshPending: false
   readonly property string glyph: "󰝕"
 
-  function expandPath(path) {
-    var value = String(path || "").trim()
-    if (value.charAt(0) === "~") value = root.home + value.slice(1)
-    return value.replace(/\/+$/, "")
-  }
-
-  function scriptPath(name) {
-    return String(Qt.resolvedUrl(name)).replace(/^file:\/\//, "")
-  }
-
   function refresh() {
-    if (scanProc.running) return
-    scanProc.command = [root.scriptPath("scan.sh"), root.todoDir]
-    scanProc.running = true
-  }
-
-  function applyScan(raw) {
-    var open = 0
-    var done = 0
-    try {
-      var parsed = JSON.parse(String(raw || "{}"))
-      var lists = Array.isArray(parsed.lists) ? parsed.lists : []
-      for (var i = 0; i < lists.length; i++) {
-        open += Number(lists[i].total || 0) - Number(lists[i].done || 0)
-        done += Number(lists[i].done || 0)
-      }
-    } catch (e) {
-      open = 0
-      done = 0
+    if (!configReady) return
+    if (validationError) {
+      openCount = 0
+      doneCount = 0
+      return
     }
-    root.openCount = open
-    root.doneCount = done
-    root.scanned = true
+    if (backend.busy) { refreshPending = true; return }
+    refreshPending = false
+    scanDirectory = todoDir
+    scanRequest = backend.request("scan", {})
   }
 
-  // Hidden until the first scan lands so the bar does not flash a zero on
-  // startup, and hidden afterwards only if the directory has no lists at all.
-  visible: scanned && (openCount > 0 || doneCount > 0)
+  function applyScan(data) {
+    var open = 0, done = 0
+    var lists = Array.isArray(data.lists) ? data.lists : []
+    for (var i = 0; i < lists.length; i++) {
+      open += Number(lists[i].total || 0) - Number(lists[i].done || 0)
+      done += Number(lists[i].done || 0)
+    }
+    openCount = open
+    doneCount = done
+    scanError = ""
+  }
+
+  visible: true
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
+  onTodoDirChanged: { scanError = ""; refresh() }
+  onValidationErrorChanged: refresh()
 
-  onTodoDirChanged: refresh()
-  Component.onCompleted: refresh()
-
-  Process {
-    id: scanProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.applyScan(text)
+  BackendBridge {
+    id: backend
+    directory: root.todoDir
+    servicePath: decodeURIComponent(String(Qt.resolvedUrl("service.py")).replace(/^file:\/\//, ""))
+    onSucceeded: function(op, requestId, data) {
+      if (op === "scan" && requestId === root.scanRequest && root.scanDirectory === root.todoDir)
+        root.applyScan(data)
     }
+    onFailed: function(op, requestId, error) {
+      if (requestId === root.scanRequest && root.scanDirectory === root.todoDir) {
+        root.scanError = error
+        root.openCount = 0
+        root.doneCount = 0
+      }
+    }
+    onBusyChanged: if (!busy && root.refreshPending) Qt.callLater(root.refresh)
   }
 
-  Timer {
-    running: true
-    interval: 15000
-    repeat: true
-    onTriggered: root.refresh()
-  }
-
-  // Catches edits made in the overlay (or an editor) shortly after they happen
-  // without polling hard.
-  Timer {
-    id: settleTimer
-    interval: 700
-    repeat: false
-    onTriggered: root.refresh()
-  }
+  Timer { running: true; interval: 15000; repeat: true; onTriggered: root.refresh() }
+  Timer { id: settleTimer; interval: 700; onTriggered: root.refresh() }
 
   FileView {
     path: root.home + "/.config/omarchy/shell.json"
@@ -100,38 +83,36 @@ BarWidget {
     printErrors: false
     onFileChanged: reload()
     onLoaded: {
-      var dir = ""
-      try {
-        var config = JSON.parse(text())
-        var entries = Array.isArray(config.plugins) ? config.plugins : []
-        for (var i = 0; i < entries.length; i++) {
-          if (entries[i] && String(entries[i].id) === root.moduleName) {
-            dir = String(entries[i].dir || "")
-            break
-          }
-        }
-      } catch (e) {
-        dir = ""
-      }
-      root.pluginDir = dir
+      var result = Config.fromShell(text(), root.moduleName)
+      root.configReady = false
+      root.configError = result.ok ? "" : result.error
+      root.pluginDir = result.value
+      root.configReady = true
+      root.refresh()
+    }
+    onLoadFailed: function(error) {
+      root.configReady = false
+      root.configError = error === FileViewError.FileNotFound ? "" : "Cannot read shell.json: " + FileViewError.toString(error)
+      root.pluginDir = undefined
+      root.configReady = true
+      root.refresh()
     }
   }
 
-  WidgetButton {
+  Ui.WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    active: root.openCount > 0
+    active: root.openCount > 0 || !!root.errorText
     useActiveColor: false
-    text: root.vertical ? String(root.openCount) : (root.glyph + "  " + root.openCount)
-    tooltipText: root.openCount + " open, " + root.doneCount + " done — " + root.todoDir
-
+    text: root.errorText ? (root.vertical ? "!" : root.glyph + "  !")
+      : (root.vertical ? String(root.openCount) : root.glyph + "  " + root.openCount)
+    tooltipText: root.errorText || (root.openCount + " open, " + root.doneCount + " done — " + root.todoDir)
     onPressed: function(b) {
-      if (b === Qt.MiddleButton) {
-        root.refresh()
-      } else if (b === Qt.RightButton) {
+      if (b === Qt.MiddleButton) root.refresh()
+      else if (b === Qt.RightButton && !root.errorText)
         Quickshell.execDetached(["omarchy-launch-editor", root.todoDir])
-      } else {
+      else {
         Quickshell.execDetached(["omarchy-shell", "-q", "shell", "toggle", root.moduleName])
         settleTimer.restart()
       }

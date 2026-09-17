@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Checks that scan.sh agrees with TodoDoc.js about what counts as a task.
 set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+test_state=$(mktemp -d)
+export XDG_STATE_HOME=$test_state
+trap 'rm -rf "$tmp" "$test_state"' EXIT
 
 pass=0
 fail=0

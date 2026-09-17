@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "id": "liambryant.todo",
-  "name": "Todo",
-  "version": "1.0.0",
-  "author": "liambryant",
-  "description": "Browse and edit markdown todo lists",
+  "name": "Super T",
+  "version": "1.1.0",
+  "author": "laiambryant",
+  "description": "A minimal, keyboard-driven Markdown task manager for Omarchy",
   "kinds": [
     "overlay",
     "bar-widget"
@@ -15,8 +15,8 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Todo",
-    "description": "Open task count; click to open the todo overlay",
+    "displayName": "Super T",
+    "description": "Your open tasks, one click away",
     "category": "Info",
     "allowMultiple": false,
     "defaultSection": "right"

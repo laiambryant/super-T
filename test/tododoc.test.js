@@ -2,7 +2,7 @@ const fs = require('fs');
 const src = fs.readFileSync(__dirname + '/../TodoDoc.js', 'utf8')
   .replace('.pragma library', '');
 const T = {};
-new Function('exports', src + '\n;Object.assign(exports,{parse,counts,setChecked,setTaskText,removeTask,appendTask,matches});')(T);
+new Function('exports', src + '\n;Object.assign(exports,{parse,counts,setChecked,setTaskText,removeTask,makeSubtask,appendTask,matches});')(T);
 
 let pass = 0, fail = 0;
 function eq(name, got, want) {
@@ -63,6 +63,16 @@ out = T.removeTask(doc, 9);
 eq('one line shorter', out.split('\n').length, doc.split('\n').length - 1);
 eq('removed the right line', out.split('\n')[9], '  - [ ] Nested subtask');
 eq('non-task line refused', T.removeTask(doc, 6), null);
+
+console.log('makeSubtask');
+out = T.makeSubtask(doc, 9);
+eq('indents below the preceding task', out.split('\n')[9], '  - [x] Renew domain');
+eq('nests below an already nested task', T.makeSubtask(doc, 11).split('\n')[11], '    * [X] Upper-case done marker');
+eq('keeps the rest of the document byte-identical',
+   out.split('\n').filter((l, i) => i !== 9).join('\n'),
+   doc.split('\n').filter((l, i) => i !== 9).join('\n'));
+eq('first task cannot become a subtask', T.makeSubtask(doc, 8), null);
+eq('non-task line cannot become a subtask', T.makeSubtask(doc, 6), null);
 
 console.log('appendTask');
 const r = T.appendTask(doc, 'Book flights');

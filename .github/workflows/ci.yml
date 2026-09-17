@@ -2,31 +2,79 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
+    name: Python ${{ matrix.python }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.14']
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          node-version: '20'
-
-      - name: Validate manifest
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install test tools
         run: |
-          jq -e '.schemaVersion == 1 and (.id | test("^[^/]+$")) and (.kinds | length > 0)' manifest.json
-          for entry in $(jq -r '.entryPoints[]' manifest.json); do
-            test -f "$entry" || { echo "missing entry point: $entry"; exit 1; }
-          done
-
-      - name: Shell lint
-        run: |
-          sudo apt-get update && sudo apt-get install -y shellcheck
-          bash -n scan.sh test/scan.test.sh
-          shellcheck scan.sh test/scan.test.sh
-
-      - name: Test
+          sudo apt-get update
+          sudo apt-get install -y shellcheck jq
+      - name: Validate and lint
+        run: make validate-source lint
+      - name: Test parsers and backend
         run: make test
+      - name: Verify release archive
+        run: make test-dist
+      - name: Upload build
+        if: matrix.python == '3.14'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: super-t-build
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  qml:
+    name: Omarchy / Qt Quick
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: archlinux:base
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - name: Install native dependencies
+        working-directory: /
+        run: pacman -Syu --noconfirm git nodejs python jq make qt6-declarative quickshell
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: plugin
+          persist-credentials: false
+      - name: Check out Omarchy shell contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: omacom/omarchy
+          ref: 9c5482c58dbe4974de337450754885083c91eada
+          path: omarchy
+          persist-credentials: false
+      - name: Validate with Omarchy
+        run: bash ../omarchy/bin/omarchy-plugin-validate .
+      - name: Test QML and service integration
+        run: OMARCHY_SHELL_DIR="$GITHUB_WORKSPACE/omarchy/shell" make test-qml
